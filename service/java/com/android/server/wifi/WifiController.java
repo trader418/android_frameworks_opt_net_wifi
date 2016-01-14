@@ -40,6 +40,7 @@ import android.os.WorkSource;
 import android.provider.Settings;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.util.Slog;
 
 import android.widget.Toast;
@@ -62,19 +63,11 @@ class WifiController extends StateMachine {
     private long mIdleMillis;
     private int mSleepPolicy;
     private boolean mFirstUserSignOnSeen = false;
+    private int mDefaultWifiIdleMs;
 
     private AlarmManager mAlarmManager;
     private PendingIntent mIdleIntent;
     private static final int IDLE_REQUEST = 0;
-
-    /**
-     * See {@link Settings.Global#WIFI_IDLE_MS}. This is the default value if a
-     * Settings.Global value is not present. This timeout value is chosen as
-     * the approximate point at which the battery drain caused by Wi-Fi
-     * being enabled but not active exceeds the battery drain caused by
-     * re-establishing a connection to the mobile data network.
-     */
-    private static final long DEFAULT_IDLE_MS = 15 * 60 * 1000; /* 15 minutes */
 
     /**
      * See {@link Settings.Global#WIFI_REENABLE_DELAY_MS}.  This is the default value if a
@@ -140,6 +133,8 @@ class WifiController extends StateMachine {
         mWifiStateMachine = service.mWifiStateMachine;
         mSettingsStore = service.mSettingsStore;
         mLocks = service.mLocks;
+        mDefaultWifiIdleMs = context.getResources().getInteger(com.android.internal.
+            R.integer.def_wifi_idle_ms);
 
         mAlarmManager = (AlarmManager)mContext.getSystemService(Context.ALARM_SERVICE);
         Intent idleIntent = new Intent(ACTION_DEVICE_IDLE, null);
@@ -215,7 +210,7 @@ class WifiController extends StateMachine {
 
     private void readWifiIdleTime() {
         mIdleMillis = Settings.Global.getLong(mContext.getContentResolver(),
-                Settings.Global.WIFI_IDLE_MS, DEFAULT_IDLE_MS);
+                Settings.Global.WIFI_IDLE_MS, mDefaultWifiIdleMs);
     }
 
     private void readWifiSleepPolicy() {
@@ -615,30 +610,54 @@ class WifiController extends StateMachine {
             mSubListener = new SubscriptionManager.OnSubscriptionsChangedListener() {
                     boolean firstChange = true;
                     SubscriptionInfo lastSub;
+                    String lastSubscriberId;
+
                     @Override
                     public void onSubscriptionsChanged() {
+                        TelephonyManager tm = (TelephonyManager)
+                            mContext.getSystemService(Context.TELEPHONY_SERVICE);
                         final SubscriptionInfo currentSub = SubscriptionManager.from(mContext)
                                 .getDefaultDataSubscriptionInfo();
-                        if (firstChange) {
-                            lastSub = currentSub;
-                            // we always get a state change on registration.
-                            firstChange = false;
-                            return;
-                        }
+
                         if (currentSub == null) {
                             // don't disable when we're not sure yet.
                             return;
                         }
-                        if (lastSub != null && currentSub.getSubscriptionId()
-                                == lastSub.getSubscriptionId()) {
+
+                        String currentSubscriberId =
+                            tm.getSubscriberId(currentSub.getSubscriptionId());
+
+                        if (currentSubscriberId == null) {
+                            // don't disable when we're not sure yet.
+                            return;
+                        }
+
+                        if (firstChange) {
+                            lastSub = currentSub;
+                            lastSubscriberId = currentSubscriberId;
+                            // we always get a state change on registration.
+                            firstChange = false;
+                            return;
+                        }
+
+                        // SubscriptionInfo#getSubscriptionId() returns a
+                        // framework handle and is not an IMSI. Don't use it to
+                        // determine if the sub changed.
+                        //
+                        // TelephonyManager#getSubscriberId() returns the IMSI,
+                        // so use that instead
+                        if (currentSubscriberId.equals(lastSubscriberId)) {
                             // don't disable if it's the same subscription
                             return;
                         }
+
                         lastSub = currentSub;
+                        lastSubscriberId = currentSubscriberId;
+
                         Toast.makeText(mContext,
                                 com.android.internal.R.string.subscription_change_disabled_wifi_ap,
                                 Toast.LENGTH_SHORT).show();
-                        log("disabling Wifi AP due to Subscription change");
+                        log("disabling Wifi AP due to Subscriber Id (IMSI) change");
                         WifiController.this.obtainMessage(CMD_SET_AP, 0, 0, null).sendToTarget();
                     }
             };
