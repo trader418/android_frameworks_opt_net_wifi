@@ -1155,7 +1155,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
         mP2pSupported = mContext.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_WIFI_DIRECT);
 
-        mWifiNative = new WifiNative(mInterfaceName, mContext);
+        mWifiNative = new WifiNative(mInterfaceName);
         mWifiConfigStore = new WifiConfigStore(context,this,  mWifiNative);
         mWifiAutoJoinController = new WifiAutoJoinController(context, this,
                 mWifiConfigStore, mWifiConnectionStatistics, mWifiNative);
@@ -2427,7 +2427,9 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                 mWifiConfigStore.enableAllNetworks();
             }
         }
-        boolean ret = mWifiNative.enableBackgroundScan(enable);
+        List<WifiNative.PnoNetworkPriority> pnoList =
+                mWifiConfigStore.retrievePnoNetworkPriorityList(enable);
+        boolean ret = mWifiNative.enableBackgroundScan(enable, pnoList);
         if (ret) {
             mLegacyPnoEnabled = enable;
         } else {
