@@ -1156,6 +1156,24 @@ public class WifiConfigStore extends IpConfigStore {
         }
     }
 
+    void unblackListDriverRoamedBSSID(String bssid) {
+          for (WifiConfiguration config : mConfiguredNetworks.values()) {
+               ScanDetailCache cache = getScanDetailCache(config);
+               if (cache != null) {
+                   ScanResult result = cache.get(bssid);
+                   if (result != null) {
+                       if (result.autoJoinStatus == (ScanResult.AUTO_ROAM_DISABLED + 1)) {
+                           if (DBG) {
+                               Log.d(TAG,"unblacklisted driver roamed BSSID = "+result.BSSID);
+                           }
+                           result.setAutoJoinStatus(ScanResult.ENABLED);
+                       }
+                   }
+               }
+          }
+    }
+
+
     void noteRoamingFailure(WifiConfiguration config, int reason) {
         if (config == null) return;
         config.lastRoamingFailure = System.currentTimeMillis();
@@ -1916,6 +1934,7 @@ public class WifiConfigStore extends IpConfigStore {
         mLastPriority = 0;
 
         mConfiguredNetworks.clear();
+        mScanDetailCaches.clear();
         List<WifiConfiguration> configTlsResetList = new ArrayList<WifiConfiguration>();
         int last_id = -1;
         boolean done = false;
@@ -2342,8 +2361,9 @@ public class WifiConfigStore extends IpConfigStore {
                         out.writeUTF(DEFAULT_GW_KEY + SEPARATOR + macAddress + NL);
                     }
 
-                    if (getScanDetailCache(config) != null) {
-                        for (ScanDetail scanDetail : getScanDetailCache(config).values()) {
+                    ScanDetailCache cache = getScanDetailCacheIfExist(config);
+                    if (cache != null) {
+                        for (ScanDetail scanDetail : cache.values()) {
                             ScanResult result = scanDetail.getScanResult();
                             out.writeUTF(BSSID_KEY + SEPARATOR +
                                     result.BSSID + NL);
@@ -2438,6 +2458,8 @@ public class WifiConfigStore extends IpConfigStore {
 
             String bssid = null;
             String ssid = null;
+            String key = null;
+            String value = null;
 
             int freq = 0;
             int status = 0;
@@ -2452,12 +2474,16 @@ public class WifiConfigStore extends IpConfigStore {
                     break;
                 }
                 int colon = line.indexOf(':');
-                if (colon < 0) {
+                char slash = line.charAt(0);
+                if ((colon < 0)&& (slash != '/')) {
                     continue;
                 }
-
-                String key = line.substring(0, colon).trim();
-                String value = line.substring(colon + 1).trim();
+                if (slash == '/') {
+                    key = line.trim();
+                } else {
+                    key = line.substring(0, colon).trim();
+                    value = line.substring(colon + 1).trim();
+                }
 
                 if (key.equals(CONFIG_KEY)) {
 
@@ -2603,8 +2629,15 @@ public class WifiConfigStore extends IpConfigStore {
                             break;
                         case BSSID_KEY:
                             status = 0;
-                            ssid = null;
-                            bssid = null;
+                            /*
+                             * The intention here is to put the scanDetail in to
+                             * the scanDetailCache per config , as done in
+                             * BSSID_KEY_END . Thus store bssid value and
+                             * comment ssid = null to ensure the code in the if
+                             * loop is executed for the case BSSID_KEY_END.
+                             */
+                        //   ssid = null;
+                            bssid = value;
                             freq = 0;
                             seen = 0;
                             rssi = WifiConfiguration.INVALID_RSSI;
@@ -3338,6 +3371,12 @@ public class WifiConfigStore extends IpConfigStore {
         }
         return cache;
     }
+
+    public ScanDetailCache getScanDetailCacheIfExist(WifiConfiguration config) {
+        if (config == null) return null;
+        return  mScanDetailCaches.get(config.networkId);
+    }
+
 
     /**
      * This function run thru the Saved WifiConfigurations and check if some should be linked.

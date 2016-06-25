@@ -374,7 +374,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
      * Interval in milliseconds between receiving a disconnect event
      * while connected to a good AP, and handling the disconnect proper
      */
-    private static final int LINK_FLAPPING_DEBOUNCE_MSEC = 7000;
+    private static final int LINK_FLAPPING_DEBOUNCE_MSEC = 4000;
 
     /**
      * Delay between supplicant restarts upon failure to establish connection
@@ -5036,6 +5036,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                 mNetworkInfo.getDetailedState() == DetailedState.CONNECTED) {
             // We no longer report MAC address to third-parties and our code does
             // not rely on this broadcast, so just send the default MAC address.
+            fetchRssiLinkSpeedAndFrequencyNative();
             WifiInfo sentWifiInfo = new WifiInfo(mWifiInfo);
             sentWifiInfo.setMacAddress(WifiInfo.DEFAULT_MAC_ADDRESS);
             intent.putExtra(WifiManager.EXTRA_WIFI_INFO, sentWifiInfo);
@@ -6016,6 +6017,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
         public void enter() {
             WifiNative.stopHal();
             mWifiNative.unloadDriver();
+            lastConnectAttemptTimestamp = 0;
             if (mWifiP2pChannel == null) {
                 mWifiP2pChannel = new AsyncChannel();
                 mWifiP2pChannel.connect(mContext, getHandler(),
@@ -6090,9 +6092,11 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                             transitionTo(mSupplicantStartingState);
                         } else {
                             loge("Failed to start supplicant!");
+                            setWifiState(WifiManager.WIFI_STATE_FAILED);
                         }
                     } else {
                         loge("Failed to load driver");
+                        setWifiState(WifiManager.WIFI_STATE_FAILED);
                     }
                     break;
                 case CMD_START_AP:
@@ -9408,6 +9412,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                     if (toBSSID != null && !toBSSID.equals(mWifiInfo.getBSSID())) {
                         mWifiConfigStore.driverRoamedFrom(mWifiInfo);
                     }
+                    mWifiConfigStore.unblackListDriverRoamedBSSID(toBSSID);
                     return NOT_HANDLED;
                 case WifiMonitor.NETWORK_DISCONNECTION_EVENT:
                     long lastRoam = 0;
@@ -9436,7 +9441,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                                     WifiConfiguration.BAD_RSSI_5))) {
                         // Start de-bouncing the L2 disconnection:
                         // this L2 disconnection might be spurious.
-                        // Hence we allow 7 seconds for the state machine to try
+                        // Hence we allow 4 seconds for the state machine to try
                         // to reconnect, go thru the
                         // roaming cycle and enter Obtaining IP address
                         // before signalling the disconnect to ConnectivityService and L3
