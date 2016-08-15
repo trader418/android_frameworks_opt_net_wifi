@@ -7631,6 +7631,7 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                     if (config == null) {
                         loge("No network with id = " + netId);
                         messageHandlingStatus = MESSAGE_HANDLING_STATUS_FAIL;
+                        replyToMessage(message, message.what, FAILURE);
                         break;
                     }
 
@@ -8134,7 +8135,9 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                                 log("Reconfiguring IP on connection");
                                 // TODO: clear addresses and disable IPv6
                                 // to simplify obtainingIpState.
-                                transitionTo(mObtainingIpState);
+                                mWifiNative.disconnect();
+                                handleNetworkDisconnect();
+                                transitionTo(mDisconnectedState);
                             }
                             if (result.hasProxyChanged()) {
                                 log("Reconfiguring proxy on connection");
@@ -9194,6 +9197,18 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiPno
                        if (DBG) log("roaming and Network connection established");
                        mLastNetworkId = message.arg1;
                        mLastBssid = (String) message.obj;
+                       /*
+                        * We used to do DHCP RENEW after framework roam succeeds.
+                        * But if connected network changed, which means previous IPv4
+                        * address is not valid.
+                        * Hence reset the roam flag to do full DHCP in such case.
+                        */
+                       if (mLastNetworkId != mWifiInfo.getNetworkId()) {
+                           log("Connected network changed ->"
+                                  + " new nid=" + mLastNetworkId
+                                  + " old nid=" + mWifiInfo.getNetworkId());
+                           mAutoRoaming = WifiAutoJoinController.AUTO_JOIN_IDLE;
+                       }
                        mWifiInfo.setBSSID(mLastBssid);
                        mWifiInfo.setNetworkId(mLastNetworkId);
                        mWifiConfigStore.handleBSSIDBlackList(mLastNetworkId, mLastBssid, true);
